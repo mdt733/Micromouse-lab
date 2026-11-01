@@ -1,6 +1,6 @@
 import {Viewport} from './viewport.js';
 const $=id=>document.getElementById(id);
-const UI={config:null,editor:null,dirty:false,ws:null,history:[],lastT:-1,scene:null,running:false,canvasMode:'perspective',lastMessage:'',clearThrough:null,lastLogs:[],lastFrameAt:0,runId:-1,traceLen:1,complete:false,replay:null,replayMode:false,replayIndex:0,replayPlaying:false,replayTimer:0,replayPlayT:0,replayLoading:null,pendingSeek:null,configPending:false,pollBusy:false};
+const UI={config:null,editor:null,dirty:false,ws:null,history:[],lastT:-1,scene:null,running:false,canvasMode:'perspective',lastMessage:'',clearThrough:null,lastLogs:[],lastFrameAt:0,runId:-1,traceLen:1,complete:false,replay:null,replayMode:false,replayIndex:0,replayPlaying:false,replayTimer:0,replayPlayT:0,replayLoading:null,pendingSeek:null,configPending:false,pollBusy:false,debug:null};
 const viewport=new Viewport($('worldCanvas'),$('viewerMode'));
 const groups=[
   {title:'CHASSIS & TYRES',fields:[
@@ -10,7 +10,7 @@ const groups=[
   {title:'BATTERY & SUCTION',fields:[
     ['battery_v','Pack voltage','V',2,8.4,.1],['battery_internal_ohm','Internal resistance','Ω',0,.9,.01],['fan_force_n','Maximum suction','N',0,5,.05],['fan_time_constant_s','Fan response time','s',.01,.8,.01],['fan_max_w','Fan electrical load','W',0,25,.5]]},
   {title:'SENSORS & EXPERIMENT',fields:[
-    ['sensor_noise_mm','ToF noise σ','mm',0,20,.2],['sensor_range_mm','ToF max range','mm',80,1500,20],['duration_s','Run duration','s',1,60,1],['seed','Random seed','',0,100000,1]]}
+    ['sensor_noise_mm','ToF noise σ','mm',0,20,.2],['sensor_range_mm','ToF max range','mm',80,1500,20],['duration_s','Run duration','s',1,600,1],['seed','Random seed','',0,100000,1]]}
 ];
 function toast(message,error=false){const el=$('toast');el.textContent=message;el.className='visible'+(error?' error':'');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.className='',4300)}
 async function api(url,options={}){const response=await fetch(url,{headers:{'Content-Type':'application/json'},...options});const data=await response.json();if(!response.ok)throw Error(data.detail||data.error||'Server error');return data}
@@ -82,19 +82,20 @@ function statusUpdate(data){
 function updateFrame(data){
   UI.lastFrameAt=Date.now();
   if(data.run_id!==undefined && data.run_id!==UI.runId){
-    UI.runId=data.run_id;UI.history=[];UI.lastT=-1;
+    UI.runId=data.run_id;UI.history=[];UI.lastT=-1;UI.debug=null;
     leaveReplay();
   }
   if(data.running!==undefined){
     UI.running=data.running;UI.complete=Boolean(data.complete);
-    $('runStatus').textContent=UI.replayMode?'REPLAY':data.running?'RUNNING':UI.complete?'COMPLETE':'PAUSED';
+    $('runStatus').textContent=UI.replayMode?'REPLAY':data.running?'RUNNING':UI.complete&&data.finish_reason==='Centre goal reached'?'GOAL REACHED':UI.complete?'COMPLETE':'PAUSED';
     $('runningLed').classList.toggle('running',data.running);
     $('codeStatus').textContent=UI.dirty?'Unsaved code changes':data.loaded?'Controller active':'Controller not loaded';
   }
   if(data.trace_len!==undefined)UI.traceLen=data.trace_len;
+  if(data.debug!==undefined)UI.debug=data.debug;
   if(data.state){
     if(!UI.replayMode){
-      presentSnapshot(data.state,data.sensors);
+      presentSnapshot(data.state,data.sensors,UI.debug);
       if(data.state.t<UI.lastT){UI.history=[];UI.lastT=-1}
       if(data.state.t!==UI.lastT){
         UI.history.push({t:data.state.t,speed:data.state.speed,grip:data.state.grip_use,accel:data.state.accel_ms2});
@@ -108,8 +109,9 @@ function updateFrame(data){
     if(!UI.replayMode)showLogs(data.logs);
   }
 }
-function presentSnapshot(s,sensor){
+function presentSnapshot(s,sensor,debug){
   viewport.update(null,s);
+  drawDiscoveredMaze(UI.scene?.maze,debug);
   $('valueTime').innerHTML=num(s.t,2)+' <small>s</small>';
   $('valueSpeed').innerHTML=num(s.speed,2)+' <small>m/s</small>';
   $('valueGrip').innerHTML=num((s.grip_use||0)*100,0)+' <small>%</small>';
@@ -145,7 +147,7 @@ function updateTimeline(t){
   if(!UI.replayMode){
     seek.value=seek.max;
     $('replayTimeLabel').textContent=`${num(t,2)} / ${num(t,2)} s`;
-    $('replayModeLabel').textContent=UI.complete?'FINISHED · drag to inspect':'LIVE · 50 Hz recording';
+    $('replayModeLabel').textContent=UI.complete?'FINISHED · drag to inspect':'LIVE · recorder active';
   }
 }
 function leaveReplay(){
@@ -153,7 +155,7 @@ function leaveReplay(){
   $('replayStrip').classList.remove('is-replay');
   $('replayPlayButton').textContent='▶ Replay';
   if(!UI.running)$('runStatus').textContent=UI.complete?'COMPLETE':'PAUSED';
-  $('replayModeLabel').textContent='LIVE · 50 Hz recording';
+  $('replayModeLabel').textContent='LIVE · recorder active';
   $('replayButton').textContent='Inspect';
   if(UI.lastLogs.length)showLogs(UI.lastLogs);
 }
@@ -182,7 +184,7 @@ function selectReplayFrame(index){
   UI.replayIndex=n;
   const frame=frames[n];
   viewport.showReplayFrame(frame.state,frames,n);
-  presentSnapshot(frame.state,frame.sensors);
+  presentSnapshot(frame.state,frame.sensors,frame.debug);
   showLogs(UI.replay.logs.filter(e=>e.t<=frame.state.t));
   $('replaySeek').max=Math.max(1,frames.length-1);
   $('replaySeek').value=n;
@@ -210,6 +212,7 @@ function connectWS(){
 }
 async function init(){
   const [data,controller]=await Promise.all([api('/api/status'),api('/api/controller')]);statusUpdate(data);setCodeValue(controller.code);
+  $('speedSelect').value=String(data.speed_factor||1);
   connectWS();wireUp();initializeMonaco();
   // REST fallback also repairs an apparently frozen Run if WebSockets are blocked.
   setInterval(async()=>{if(UI.pollBusy||Date.now()-UI.lastFrameAt<350)return;UI.pollBusy=true;try{const frame=await api('/api/status');updateFrame(frame);$('connectionLabel').textContent='Connected · polling';$('connectionLed').classList.add('online')}catch(e){$('connectionLabel').textContent='Backend offline';$('connectionLed').classList.remove('online')}finally{UI.pollBusy=false}},400);
@@ -223,7 +226,63 @@ function drawGraph(){const canvas=$('telemetryCanvas'),ctx=canvas.getContext('2d
   for(const [key,denom,color] of [['speed',maxSpeed,'#64cadb'],['grip',1,'#b5e87d'],['accel',maxAccel,'#e8b86a']]){ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.beginPath();values.forEach((entry,i)=>{const x=i/Math.max(values.length-1,1)*w,y=h-4-Math.max(0,entry[key]/denom)*(h-10);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.stroke()}
   if(UI.replayMode){const x=UI.replayIndex/Math.max(values.length-1,1)*w;ctx.strokeStyle='#f5f4e5';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}
 }
+async function loadMazeDemo(){
+  if(UI.dirty&&!confirm('Replace your unsaved controller edits with the maze solver example?'))return;
+  try{
+    const course=$('courseSelect').value;
+    if(!course.startsWith('competition_') && course!=='maze_demo'){toast('Select a maze course first.',true);return}
+    const preset=await api(course==='maze_demo'?'/api/presets/maze_demo':'/api/presets/competition/'+course.slice('competition_'.length));
+    // Fill the Garage, but do not apply/reset until the user presses Save & Run.
+    parameterUI(preset.config);
+    markPending();
+    setCodeValue(preset.controller);
+    setDirty(true);
+    toast('Selected maze + sensor-only solver loaded. Press Save & Run.');
+  }catch(e){toast(e.message,true)}
+}
+
+function drawDiscoveredMaze(maze,debug){
+  const wrap=$('mazeMapWrap');
+  if(!maze){wrap.hidden=true;return}
+  wrap.hidden=false;
+  const cv=$('mazeMapCanvas'),ctx=cv.getContext('2d');
+  if(!ctx)return;
+  const w=maze.width,h=maze.height,s=w>8?12:29,margin=8;
+  cv.width=margin*2+w*s;cv.height=margin*2+h*s;
+  ctx.fillStyle='#13232e';ctx.fillRect(0,0,cv.width,cv.height);
+  const visited=debug?.visited||[],closed=debug?.closed||[],open=debug?.open||[];
+  const px=x=>margin+x*s,py=y=>margin+(h-1-y)*s;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const X=px(x),Y=py(y),v=visited[y]?.[x]||0;
+    ctx.fillStyle=v?'#29564f':'#1a303a';ctx.fillRect(X+1,Y+1,s-2,s-2);
+    if(maze.goal_cells.some(([gx,gy])=>gx===x&&gy===y)){
+      ctx.strokeStyle='#c9ad65';ctx.lineWidth=1.5;ctx.strokeRect(X+3,Y+3,s-6,s-6);
+    }
+    if(v){ctx.fillStyle='#c8e4dc';ctx.font=(w>8?'7px':'9px')+' monospace';ctx.textAlign='center';ctx.fillText(String(v),X+s/2,Y+s/2+3)}
+    // Draw confirmed walls thick; unknown edges in dim dashed outlines.
+    for(const [bit,x1,y1,x2,y2] of [[1,X,Y,X+s,Y],[2,X+s,Y,X+s,Y+s],[4,X,Y+s,X+s,Y+s],[8,X,Y,X,Y+s]]){
+      const isClosed=(closed[y]?.[x]||0)&bit;
+      const isOpen=(open[y]?.[x]||0)&bit;
+      ctx.beginPath();ctx.setLineDash(isClosed||isOpen?[]:[2,3]);
+      ctx.strokeStyle=isClosed?'#e2ebeb':isOpen?'#28404a':'#627987';
+      ctx.lineWidth=isClosed?(w>8?2:3):1;
+      ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    }
+  }
+  ctx.setLineDash([]);
+  if(debug?.target_cell){const [x,y]=debug.target_cell;ctx.strokeStyle='#ebc570';ctx.lineWidth=2;ctx.strokeRect(px(x)+4,py(y)+4,s-8,s-8)}
+  if(debug?.cell){
+    const [x,y]=debug.cell;const X=px(x)+s/2,Y=py(y)+s/2;
+    ctx.fillStyle='#5decbd';ctx.beginPath();ctx.arc(X,Y,5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#5decbd';ctx.lineWidth=2;ctx.beginPath();
+    ctx.moveTo(X,Y);ctx.lineTo(X+10*Math.cos(debug.heading_rad||0),Y-10*Math.sin(debug.heading_rad||0));ctx.stroke();
+  }
+  $('mazeMapStatus').textContent=debug?.mode?.toUpperCase()||'UNKNOWN';
+  $('mazeMapMeta').textContent=`Visited ${visited.flat().filter(Boolean).length} / ${w*h} · Moves ${debug?.moves||0}`;
+}
+
 function wireUp(){
+  $('speedSelect').addEventListener('change',async e=>{try{await api('/api/speed',{method:'POST',body:JSON.stringify({factor:Number(e.target.value)})});toast('Target simulation speed: '+e.target.value+'× (CPU permitting)')}catch(err){toast(err.message,true)}});
   $('runButton').addEventListener('click',saveAndRun);
   $('pauseButton').addEventListener('click',()=>act('pause').catch(()=>{}));
   $('stepButton').addEventListener('click',()=>{leaveReplay();act('step').catch(()=>{})});
@@ -234,6 +293,7 @@ function wireUp(){
   $('replayButton').addEventListener('click',()=>enterReplay(UI.traceLen-1));
   $('replayPlayButton').addEventListener('click',async()=>{if(!UI.replayMode)await enterReplay(0);if(!UI.replayMode)return;if(UI.replayIndex>=UI.replay.frames.length-1)selectReplayFrame(0);UI.replayPlaying=!UI.replayPlaying;UI.replayTimer=0;UI.replayPlayT=UI.replay.frames[UI.replayIndex].state.t;$('replayPlayButton').textContent=UI.replayPlaying?'Ⅱ Replay':'▶ Replay'});
   $('liveButton').addEventListener('click',async()=>{leaveReplay();try{updateFrame(await api('/api/status'))}catch(e){toast(e.message,true)}});
+  $('mazeDemoButton').addEventListener('click',loadMazeDemo);
   $('exampleSelect').addEventListener('change',async e=>{if(!e.target.value)return;try{const result=await api('/api/examples/'+e.target.value);setCodeValue(result.code);setDirty(true);toast('Example loaded. Save & Run to execute it.')}catch(err){toast(err.message,true)}e.target.value=''});
   $('applyButton').addEventListener('click',async()=>{try{const data=await api('/api/config',{method:'POST',body:JSON.stringify({config:currentConfig()})});statusUpdate(data);toast('Hardware and course rebuilt')}catch(e){toast(e.message,true)}});
   $('courseSelect').addEventListener('change',markPending);

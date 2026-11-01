@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="color-scheme" content="dark" />
-  <title>MicroMouse Lab v0.2 — virtual racing workshop</title>
+  <title>MicroMouse Lab v0.4 — virtual racing workshop</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div class="brand-mark">M<span>·</span></div><div><strong>MICROMOUSE</strong><span>LAB / 0.2</span></div></div>
+    <div class="brand"><div class="brand-mark">M<span>·</span></div><div><strong>MICROMOUSE</strong><span>LAB / 0.4</span></div></div>
     <div class="primary-controls">
+      <label class="sim-speed" for="speedSelect">Speed <select id="speedSelect" aria-label="Simulation speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
       <button class="btn btn-run" id="runButton" title="Save controller and restart run">▶ <span>Save &amp; Run</span></button>
       <button class="btn" id="pauseButton" title="Pause">Ⅱ <span>Pause</span></button>
       <button class="btn" id="stepButton" title="Advance one controller tick">↷ <span>Step</span></button>
@@ -27,8 +28,8 @@
     <section id="garage" class="panel garage">
       <div class="panel-heading"><div><p class="eyebrow">01 / BUILD</p><h2>Garage &amp; track</h2></div><span class="small-chip">PARAMETERS</span></div>
       <div class="garage-scroll">
-        <div class="select-course"><label for="courseSelect">Test environment</label><select id="courseSelect"><option value="straight">Straight sprint</option><option value="corner">90° left bend</option><option value="slalom">Slalom course</option></select></div>
-        <div id="parameterGroups"></div>
+        <div class="select-course"><label for="courseSelect">Test environment</label><select id="courseSelect"><option value="straight">Straight sprint</option><option value="corner">90° left bend</option><option value="slalom">Slalom course</option><option value="maze_demo">Demo maze · 6×6</option><optgroup label="Historic competition mazes"><option value="competition_apec_2013">APEC 2013 · 16×16</option><option value="competition_apec_2016">APEC 2016 · 16×16</option><option value="competition_apec_2018">APEC 2018 · 16×16</option><option value="competition_japan_2017">All Japan 2017 · 16×16</option></optgroup></select><button class="btn apply" type="button" id="mazeDemoButton">⌘ Load selected maze + solver <span>➜</span></button></div>
+        <p class="help">Historic layouts are community transcriptions, not certified originals. The onboard controller never receives true walls.</p><div id="parameterGroups"></div>
         <button class="btn apply" id="applyButton">Apply configuration <span>⟳</span></button>
         <p class="help">Structural changes rebuild and reset the physical model. The current tyre and suction dynamics are experimental approximations.</p>
       </div>
@@ -37,7 +38,7 @@
     <div class="splitter" id="splitterLeft" title="Drag to resize panels"></div>
     <section id="editor" class="panel editor-panel">
       <div class="panel-heading"><div><p class="eyebrow">02 / PROGRAM</p><h2>Onboard logic</h2></div><span class="small-chip">PYTHON</span></div>
-      <div class="editor-toolbar"><div class="editor-tab"><span class="file-dot">●</span> controller.py <span id="dirtyMarker"></span></div><select id="exampleSelect" class="example-select" aria-label="Load example controller"><option value="">Load example…</option><option value="wall_follower">Wall follower</option><option value="left_turn">90° left turn</option></select><button id="saveButton" class="text-button">Save code</button></div>
+      <div class="editor-toolbar"><div class="editor-tab"><span class="file-dot">●</span> controller.py <span id="dirtyMarker"></span></div><select id="exampleSelect" class="example-select" aria-label="Load example controller"><option value="">Load example…</option><option value="wall_follower">Wall follower</option><option value="left_turn">90° left turn</option><option value="maze_solver">6×6 flood-fill maze solver</option><option value="classic_competition_solver">Classic 16×16 solver</option></select><button id="saveButton" class="text-button">Save code</button></div>
       <div class="editor-container" id="editorContainer"><textarea id="codeEditor" spellcheck="false" aria-label="Python controller source"></textarea></div>
       <div class="inspector">
         <div class="subheading"><span>LIVE SENSOR INPUT</span><span>RAW / VIRTUAL</span></div>
@@ -52,14 +53,14 @@
     <section id="world" class="panel world-panel">
       <div class="panel-heading world-heading"><div><p class="eyebrow">03 / SIMULATE</p><h2>World &amp; telemetry</h2></div><div class="engine-name">PLANAR PHYSICS <span>·</span> 1 kHz</div></div>
       <div class="viewer-wrap" id="viewerWrap">
-        <canvas id="worldCanvas"></canvas>
+        <canvas id="worldCanvas"></canvas><div id="mazeMapWrap" class="maze-map-wrap" hidden><div class="maze-map-title">DISCOVERED MAP <span id="mazeMapStatus">UNKNOWN</span></div><canvas id="mazeMapCanvas" width="204" height="204" aria-label="Controller-discovered maze walls"></canvas><div id="mazeMapMeta" class="maze-map-meta">Known cells 0</div></div>
         <div class="view-overlay"><span class="live-pill"><span class="led" id="runningLed"></span><span id="runStatus">READY</span></span><span id="sceneName">Straight sprint</span></div>
         <div class="camera-controls"><button data-camera="perspective" class="selected">3D</button><button data-camera="top">Top</button><button data-camera="follow">Follow</button></div>
         <div class="view-footer"><span>DRAG TO ORBIT · SCROLL TO ZOOM</span><span id="viewerMode">Loading 3D…</span></div>
       </div>
       <div class="replay-strip" id="replayStrip">
         <div class="replay-heading">
-          <div><strong>FLIGHT RECORDER</strong> <span id="replayModeLabel">LIVE · samples every 20 ms</span></div>
+          <div><strong>FLIGHT RECORDER</strong> <span id="replayModeLabel">LIVE · recorded samples</span></div>
           <div class="replay-actions">
             <button id="replayButton" class="text-button" disabled title="Inspect a recorded moment">Inspect</button>
             <button id="replayPlayButton" class="text-button" disabled title="Play from the selected recorded time">▶ Replay</button>

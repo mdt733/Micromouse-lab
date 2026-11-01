@@ -1,15 +1,29 @@
-# MicroMouse Lab — v0.2 (Git-ready experimental prototype)
+# MicroMouse Lab — v0.4 (historical competition mazes)
 
 A **local HTML/JavaScript workshop + Python simulation backend** for experimenting with micromouse robot configurations and autonomous controllers.
 
 **Important:** This version runs a **custom 2D planar physics approximation**, rendered in a 3D WebGL scene. It **does not yet use MuJoCo**. The physics module is deliberately independent of the controller interface and browser for a future MuJoCo backend. Dynamics are not calibrated to any physical robot. Do not use these results for engineering predictions without measurement and validation.
 
+## v0.3: run the autonomous maze demo
+
+1. Start WSL: `cd ~/micromouse-lab && ./launch-linux.sh` (or your clone location), then browse to **http://127.0.0.1:8000**.
+2. In the Garage, click **Load maze + solver**. This loads a preset with the default 12 mm wheels, a **60-second run limit**, the 6×6 maze and a sensor-only Python flood-fill controller. It does **not** overwrite your saved controller until you click Save & Run.
+3. Press **Save & Run**. The mouse explores from `(0,0)` facing east, learns wall locations using multiple ToF readings at each cell centre, tracks turns with gyro, counts wheel encoder ticks for distances, backtracks when necessary and stops after reaching one of the four centre goal cells.
+4. Watch **Discovered map** inside the 3D viewer. The bright walls/visited cells are reported by the controller; the large 3D maze is the true test world. Their disagreement can reveal odometry/sensor errors.
+5. After **GOAL REACHED**, drag the Flight Recorder slider to inspect how the map, pose and acceleration evolved. You can also use Replay and Export.
+
+The maze is a fixed, connected 6×6 demo with dead ends and loops, generated once from a deterministic seed. The map/shortest route is **never** passed to the controller: only noisy front/left/right ToF, gyro, encoders, timestamps and battery voltage. Controller output can include a `debug` dictionary to visualise *its* beliefs. `done=True` marks the run finished (for the solver, `reason='Centre goal reached'`).
+
+The baseline solver is intentionally slow stop-turn-drive exploration, not an optimal racing-line planner or a full 16×16 competition solution. It assumes a known 180 mm cell pitch, 12 mm wheel radius, starting cell and heading, and a centre goal. Modifying physical wheel radius without updating the solver constant will invalidate encoder odometry. The planar friction model, collisions and sensors remain simplified.
+
+**WSL note:** `requirements.txt` now installs `uvicorn[standard]` so `/ws` works. `launch-linux.sh` checks the dependency-file fingerprint and upgrades an existing `.venv` when it changes. Optional tests: `source .venv/bin/activate && pip install -r requirements-dev.txt && python -m pytest -q`.
+
 ## What works
 
 - Three-panel browser UI: adjustable **Garage**, real editable Python **controller.py**, interactive **3D world** with **console/telemetry**.
 - Camera modes: perspective, top, follow; mouse orbit and scroll zoom.
-- Garage settings for mass, wheel track and radius, tyre grip and stiffness, brushed/brushless/ideal motor approximations, Kv/gears/current, battery droop, fan suction and spool-up, ToF range and noise, and run seed/duration. Two editor-loadable controller examples: wall follower and 90° gyro turn.
-- Courses: straight corridor, 90° corner, slalom. The yellow dashed route is a viewer-only guide, **not** supplied to the controller.
+- Garage settings for mass, wheel track and radius, tyre grip and stiffness, brushed/brushless/ideal motor approximations, Kv/gears/current, battery droop, fan suction and spool-up, ToF range and noise, and run seed/duration. Three editor-loadable controller examples: wall follower, 90° gyro turn and flood-fill maze solver.
+- Courses: straight corridor, 90° corner, slalom, and an actual connected 6×6 micromouse maze. The yellow dashed route is a viewer-only guide, **not** supplied to the controller.
 - Real planar physics calculations at **1 kHz**; **200 Hz** sensor/controller cycles; browser frames at approximately 50 Hz.
 - Five noisy ToF distances (computed from course walls), encoder ticks, noisy yaw-rate gyro, battery voltage. Sensor visibility respects line-of-sight and maximum range.
 - Python control in a **separate child process** with per-cycle timeout, editable inside the app.
@@ -52,7 +66,7 @@ The uploader is an ordinary batch file, intended to be **run on your Windows PC*
 ## Start on Linux / WSL
 
 ```bash
-cd micromouse-lab-v0.1
+cd micromouse-lab
 ./launch-linux.sh
 # Open http://127.0.0.1:8000 in Windows or your WSL browser.
 ```
@@ -68,7 +82,7 @@ python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000
 
 ## Controller contract
 
-The app stores Python controller source in `data/controller.py`; you can also load the bundled **Wall follower** and **90° left turn** examples from the editor dropdown. Every new **Save & Run** resets the environment and starts a fresh worker process. The worker calls either `Controller().step(sensors, dt)` or a top-level `step(sensors, dt)` on every controller tick.
+The app stores Python controller source in `data/controller.py`; you can also load the bundled **Wall follower**, **90° left turn** and **Flood-fill maze solver** examples from the editor dropdown. Every new **Save & Run** resets the environment and starts a fresh worker process. The worker calls either `Controller().step(sensors, dt)` or a top-level `step(sensors, dt)` on every controller tick.
 
 ```python
 class Controller:
@@ -105,7 +119,7 @@ class Controller:
 - `web/index.html`, `web/style.css`, `web/app.js`, `web/viewport.js` — interface, editing, WebGL rendering, charts.
 - `data/controller.py` — editable starting controller.
 - `data/config.json` — written when hardware settings are applied.
-- `tests/test_physics.py`, `tests/test_run_replay.py` — physics and unattended-run/replay contract tests (`python -m pytest -q`).
+- `tests/test_physics.py`, `tests/test_run_replay.py`, `tests/test_maze_solver.py` — physics and unattended-run/replay contract tests (`python -m pytest -q`).
 - `upload-to-github.bat`, `.gitignore`, `.gitattributes` — Git/GitHub upload and platform-neutral source formatting.
 
 ## Roadmap
@@ -113,11 +127,47 @@ class Controller:
 1. Validate the planar kinematics with measured acceleration/braking tests and expose consistent metrics.
 2. Add a **MuJoCo backend** with true wheel contacts, torque actuators, and suction applied as external body forces; compare it against the planar baseline, not silently interchange results.
 3. Introduce motor model presets with explicit data sheets, torque/speed curves, and ESC modes.
-4. Make more complete micromouse 16x16 mazes with exploration and flood-fill; editor can load multiple scripts.
+4. Extend the working 6x6 flood-fill demo to 16x16, fully map unknown walls, return home and attempt a faster second run.
 5. Add reproducible benchmarks, ghost runs, slow-motion and advanced telemetry replay, controller safety limits, and physical parameter sweeps.
 
 ## Limitations
 
-The 3D render is a visualization of the 2D simulator, **not 3D MuJoCo dynamics**. The current brushless model, suction model, battery and tyre values are exploratory and intentionally not pitched as accurate engineering predictions. Maze exploration and RL are not implemented. Controller process isolation is not an OS security sandbox.
+The 3D render is a visualization of the 2D simulator, **not 3D MuJoCo dynamics**. The current brushless model, suction model, battery and tyre values are exploratory and intentionally not pitched as accurate engineering predictions. The 6×6 demo and four historical 16×16 layouts are implemented; reliable competition-grade autonomy, calibrated dynamics and RL are not. Controller process isolation is not an OS security sandbox.
 
 **Replay timing note:** physics snapshots are taken every 20 ms of simulation time (50 Hz); displayed ToF readings are the most recent input to the 200 Hz controller, so their own `timestamp_s` can be up to 5 ms earlier. Continuous run pacing can lag wall-clock time on a busy PC.
+
+## v0.4 — Historical competition maze pack
+
+Select an APEC or All Japan 16×16 course from **Garage → Test environment**, then click
+**Load selected maze + solver** and **Save & Run**. The loader automatically switches
+from the 6×6 demo controller to a 16×16 classic controller, with 180 mm cells,
+a known north-facing start, and a four-cell centre goal. The controller receives
+no hidden wall map; its onboard map is built from virtual ToF and encoder/gyro readings.
+
+Included layouts (community transcriptions, **not certified official originals**):
+
+| Course | Local file | Original transcription source |
+| --- | --- | --- |
+| APEC 2013 | `mazes/2013apec.maze` | https://www.tcp4me.com/mmr/mazes/2013apec.maze |
+| APEC 2016 | `mazes/2016apec.maze` | https://www.tcp4me.com/mmr/mazes/2016apec.maze |
+| APEC 2018 | `mazes/2018apec.maze` | https://www.tcp4me.com/mmr/mazes/2018apec.maze |
+| All Japan 2017 | `mazes/2017japan.maze` | https://www.tcp4me.com/mmr/mazes/2017japan.maze |
+
+The import logic is in `backend/competition.py`. It verifies a rectangular
+2-character-per-cell maze, reciprocal walls, closed boundaries, and a reachable
+centre, then merges collinear physical walls to keep raycasts affordable.
+The ASCII files are checked into source for reproducibility and offline use.
+
+**Experimental limitations:** The 16×16 example solver is a conservative
+stop/turn/go baseline, not a competitive speed runner. On the APEC 2018 layout,
+a direct in-process physics/controller trial reached a centre cell after about
+284 simulated seconds and 191 cell traversals, with 22 recorded contact events.
+Other mazes pass geometric reachability checks, but **their autonomous completion
+has not been proven**. Inaccurate wheel odometry, contact corrections, noisy ToF,
+and a 300-second preset limit can still prevent success. This is useful test
+material for improving mapping and localisation, not evidence of a robust mouse.
+
+Historical archive background: https://github.com/micromouseonline/mazefiles
+(The archive itself cautions that some source layouts may be inaccurate or duplicates.)
+
+**Long mazes:** Set the toolbar **Speed** selector to 4× or 8× to accelerate exploration (CPU permitting). This changes simulation scheduling, not the simulated physics step or controller timestep. 16×16 traces are recorded at ~10 Hz to manage memory.
