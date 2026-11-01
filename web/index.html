@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>MicroMouse Lab v0.2 — virtual racing workshop</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">M<span>·</span></div><div><strong>MICROMOUSE</strong><span>LAB / 0.2</span></div></div>
+    <div class="primary-controls">
+      <button class="btn btn-run" id="runButton" title="Save controller and restart run">▶ <span>Save &amp; Run</span></button>
+      <button class="btn" id="pauseButton" title="Pause">Ⅱ <span>Pause</span></button>
+      <button class="btn" id="stepButton" title="Advance one controller tick">↷ <span>Step</span></button>
+      <button class="btn" id="resetButton" title="Reset model">⟲ <span>Reset</span></button>
+      <div class="top-separator"></div>
+      <button class="btn quiet" id="exportButton" title="Export complete trace and settings">⇩ Export</button>
+    </div>
+    <div class="session"><span class="led" id="connectionLed"></span><span id="connectionLabel">Connecting</span><span class="session-quiet">LOCAL LAB</span></div>
+  </header>
+  <nav class="mobile-tabs" aria-label="Panels">
+    <button data-mobile-panel="garage">Garage</button><button data-mobile-panel="editor">Code</button><button class="selected" data-mobile-panel="world">World</button>
+  </nav>
+  <main class="workspace" id="workspace">
+    <section id="garage" class="panel garage">
+      <div class="panel-heading"><div><p class="eyebrow">01 / BUILD</p><h2>Garage &amp; track</h2></div><span class="small-chip">PARAMETERS</span></div>
+      <div class="garage-scroll">
+        <div class="select-course"><label for="courseSelect">Test environment</label><select id="courseSelect"><option value="straight">Straight sprint</option><option value="corner">90° left bend</option><option value="slalom">Slalom course</option></select></div>
+        <div id="parameterGroups"></div>
+        <button class="btn apply" id="applyButton">Apply configuration <span>⟳</span></button>
+        <p class="help">Structural changes rebuild and reset the physical model. The current tyre and suction dynamics are experimental approximations.</p>
+      </div>
+      <div class="panel-footer"><span class="status-dot"></span> <span id="configStatus">Configuration loaded</span></div>
+    </section>
+    <div class="splitter" id="splitterLeft" title="Drag to resize panels"></div>
+    <section id="editor" class="panel editor-panel">
+      <div class="panel-heading"><div><p class="eyebrow">02 / PROGRAM</p><h2>Onboard logic</h2></div><span class="small-chip">PYTHON</span></div>
+      <div class="editor-toolbar"><div class="editor-tab"><span class="file-dot">●</span> controller.py <span id="dirtyMarker"></span></div><select id="exampleSelect" class="example-select" aria-label="Load example controller"><option value="">Load example…</option><option value="wall_follower">Wall follower</option><option value="left_turn">90° left turn</option></select><button id="saveButton" class="text-button">Save code</button></div>
+      <div class="editor-container" id="editorContainer"><textarea id="codeEditor" spellcheck="false" aria-label="Python controller source"></textarea></div>
+      <div class="inspector">
+        <div class="subheading"><span>LIVE SENSOR INPUT</span><span>RAW / VIRTUAL</span></div>
+        <div class="sensor-grid" id="sensorGrid">
+          <div>FRONT <strong>—</strong></div><div>F-LEFT <strong>—</strong></div><div>F-RIGHT <strong>—</strong></div><div>LEFT <strong>—</strong></div><div>RIGHT <strong>—</strong></div><div>GYRO <strong>—</strong></div>
+        </div>
+        <div class="controller-note">Controller receives ToF, encoders, gyro and battery voltage — not ground-truth pose.</div>
+      </div>
+      <div class="panel-footer"><span class="status-dot"></span><span id="codeStatus">Controller not loaded</span></div>
+    </section>
+    <div class="splitter" id="splitterCenter" title="Drag to resize panels"></div>
+    <section id="world" class="panel world-panel">
+      <div class="panel-heading world-heading"><div><p class="eyebrow">03 / SIMULATE</p><h2>World &amp; telemetry</h2></div><div class="engine-name">PLANAR PHYSICS <span>·</span> 1 kHz</div></div>
+      <div class="viewer-wrap" id="viewerWrap">
+        <canvas id="worldCanvas"></canvas>
+        <div class="view-overlay"><span class="live-pill"><span class="led" id="runningLed"></span><span id="runStatus">READY</span></span><span id="sceneName">Straight sprint</span></div>
+        <div class="camera-controls"><button data-camera="perspective" class="selected">3D</button><button data-camera="top">Top</button><button data-camera="follow">Follow</button></div>
+        <div class="view-footer"><span>DRAG TO ORBIT · SCROLL TO ZOOM</span><span id="viewerMode">Loading 3D…</span></div>
+      </div>
+      <div class="replay-strip" id="replayStrip">
+        <div class="replay-heading">
+          <div><strong>FLIGHT RECORDER</strong> <span id="replayModeLabel">LIVE · samples every 20 ms</span></div>
+          <div class="replay-actions">
+            <button id="replayButton" class="text-button" disabled title="Inspect a recorded moment">Inspect</button>
+            <button id="replayPlayButton" class="text-button" disabled title="Play from the selected recorded time">▶ Replay</button>
+            <button id="liveButton" class="text-button" disabled title="Return to the latest live state">↪ Latest</button>
+          </div>
+        </div>
+        <div class="timeline-row">
+          <label for="replaySeek" id="replayTimeLabel">0.00 / 0.00 s</label>
+          <input id="replaySeek" type="range" min="0" max="1" step="1" value="0" disabled aria-label="Scrub the simulation time" />
+        </div>
+        <div class="replay-readouts" id="replayReadouts">Select any recorded moment to inspect acceleration, lateral force, grip and motor currents.</div>
+      </div>
+      <div class="numbers" id="numbers">
+        <div><span>SIM TIME</span><strong id="valueTime">0.00 <small>s</small></strong></div>
+        <div><span>VELOCITY</span><strong id="valueSpeed">0.00 <small>m/s</small></strong></div>
+        <div><span>GRIP USED</span><strong id="valueGrip">0 <small>%</small></strong></div>
+        <div><span>DOWNFORCE</span><strong id="valueFan">0.00 <small>N</small></strong></div>
+        <div><span>ENERGY</span><strong id="valueEnergy">0.0 <small>J</small></strong></div>
+      </div>
+      <div class="lower-panel">
+        <div class="console-head"><div class="console-tabs"><button id="tabConsole" class="selected">⌁ Console</button><button id="tabGraph">╱ Telemetry</button></div><button class="text-button" id="clearConsole">Clear</button></div>
+        <div class="console" id="console"></div>
+        <div class="graph" id="graph" hidden><canvas id="telemetryCanvas"></canvas><div class="graph-legend"><span>— Speed (m/s)</span><span>— Grip utilisation (0–1)</span><span>— Accel (m/s²)</span></div></div>
+      </div>
+    </section>
+  </main>
+  <footer class="statusbar"><span>MICROMOUSE LAB · EXPERIMENTAL</span><span id="statusDetail">Local Python simulator</span><span>Controller 200 Hz <b>·</b> Physics 1000 Hz <b>·</b> Replay 50 Hz</span></footer>
+  <div id="toast" role="status"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js" defer></script>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

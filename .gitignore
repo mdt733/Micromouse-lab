@@ -1,0 +1,36 @@
+# Python and virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local user/simulation data. The starter controller remains tracked.
+data/config.json
+data/*.log
+data/*.jsonl
+runs/
+recordings/
+exports/
+*.sqlite
+*.sqlite3
+
+# Machine-local secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editor and Windows leftovers
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+
+# Distribution bundles
+*.zip
