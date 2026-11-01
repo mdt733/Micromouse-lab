@@ -5,7 +5,7 @@ export class Viewport {
     this.canvas.addEventListener('pointerdown',e=>{this.drag={x:e.clientX,y:e.clientY};this.canvas.setPointerCapture(e.pointerId)});
     this.canvas.addEventListener('pointermove',e=>{if(!this.drag || this.mode==='top')return;this.theta+=(e.clientX-this.drag.x)*.008;this.phi=Math.max(.18,Math.min(1.44,this.phi-(e.clientY-this.drag.y)*.008));this.drag={x:e.clientX,y:e.clientY}});
     this.canvas.addEventListener('pointerup',()=>this.drag=null);
-    this.canvas.addEventListener('wheel',e=>{e.preventDefault();this.distance=Math.max(.4,Math.min(5,this.distance*Math.exp(e.deltaY*.001)))},{passive:false});
+    this.canvas.addEventListener('wheel',e=>{e.preventDefault();this.distance=Math.max(.4,Math.min(10,this.distance*Math.exp(e.deltaY*.001)))},{passive:false});
     new ResizeObserver(()=>this.resize()).observe(canvas.parentElement);
     this.initialize();
   }
@@ -32,7 +32,7 @@ export class Viewport {
     }catch(err){console.warn('Three.js unavailable; switching to canvas fallback',err);this.label.textContent='2D FALLBACK · 3D CDN OFFLINE';this.THREE=null;this.ctx=this.canvas.getContext('2d');this.resize();}
   }
   update(scene,state){
-    if(scene&&(!this.sceneData||JSON.stringify(scene)!==JSON.stringify(this.sceneData))){this.sceneData=scene;this.trail=[];this.lastT=-1;this.rebuild();}
+    if(scene&&(!this.sceneData||JSON.stringify(scene)!==JSON.stringify(this.sceneData))){this.sceneData=scene;this.trail=[];this.lastT=-1;this.distance=scene.maze?Math.max(2,Math.max(scene.maze.width,scene.maze.height)*scene.maze.cell_m*1.7):2;this.rebuild();}
     if(state){if(state.t<this.lastT){this.trail=[];}this.state=state;if(state.t!==this.lastT){this.lastT=state.t;this.trail.push([state.x,state.y]);if(this.trail.length>3000)this.trail.shift();}}
   }
   showReplayFrame(state, frames, index){
@@ -73,6 +73,16 @@ export class Viewport {
       hub.rotation.x=Math.PI/2;hub.position.copy(wheel.position);this.robot.add(hub);
     }
     const fan=new T.Mesh(new T.CylinderGeometry(.012,.012,.009,24),new T.MeshStandardMaterial({color:0x0d2639,metalness:.35,roughness:.4}));fan.position.set(-.009,.038,0);this.robot.add(fan);
+    if(this.sceneData.maze){
+      const mz=this.sceneData.maze;
+      const goalMat=new T.MeshStandardMaterial({color:0xdfc86a,transparent:true,opacity:.58,roughness:.9});
+      for(const [cx,cy] of mz.goal_cells){
+        const tile=new T.Mesh(new T.PlaneGeometry(mz.cell_m-.009,mz.cell_m-.009),goalMat);
+        tile.rotation.x=-Math.PI/2;
+        tile.position.set(mz.origin[0]+(cx+.5)*mz.cell_m,.001,mz.origin[1]+(cy+.5)*mz.cell_m);
+        this.wallsGroup.add(tile);
+      }
+    }
     const route=this.sceneData.route.map(([x,y])=>new T.Vector3(x,.002,y));
     if(route.length>1){const guide=new T.Line(new T.BufferGeometry().setFromPoints(route),new T.LineDashedMaterial({color:0xd7b66b,dashSize:.025,gapSize:.013,transparent:true,opacity:.65}));guide.computeLineDistances();this.wallsGroup.add(guide);}
   }
@@ -102,9 +112,13 @@ export class Viewport {
   }
   draw2D(){
     if(!this.ctx||!this.sceneData)return;
-    const ctx=this.ctx,scale=Math.min(this.w/2.5,this.h/1.6),px=d=>d*scale,dpr=this.canvas.width/this.w;
+    const ctx=this.ctx,span=this.sceneData.maze?Math.max(this.sceneData.maze.width,this.sceneData.maze.height)*this.sceneData.maze.cell_m+.3:2.5,scale=Math.min(this.w/span,this.h/span),px=d=>d*scale,dpr=this.canvas.width/this.w;
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#10232e';ctx.fillRect(0,0,this.w,this.h);ctx.save();ctx.translate(this.w/2,this.h/2);
     ctx.strokeStyle='#263d49';ctx.lineWidth=1;for(let i=-12;i<=12;i++){ctx.beginPath();ctx.moveTo(px(i*.1),-this.h);ctx.lineTo(px(i*.1),this.h);ctx.stroke();ctx.beginPath();ctx.moveTo(-this.w,px(i*.1));ctx.lineTo(this.w,px(i*.1));ctx.stroke()}
+    if(this.sceneData.maze){const mz=this.sceneData.maze;
+      ctx.fillStyle='rgba(237,199,103,.26)';
+      for(const [x,y] of mz.goal_cells){ctx.fillRect(px(mz.origin[0]+x*mz.cell_m),px(mz.origin[1]+y*mz.cell_m),px(mz.cell_m),px(mz.cell_m))}
+    }
     for(const [x,y,hx,hy] of this.sceneData.walls){ctx.fillStyle='#dbe3de';ctx.fillRect(px(x-hx),px(y-hy),px(hx*2),px(hy*2))}
     ctx.strokeStyle='#bd9863';ctx.lineWidth=2;ctx.setLineDash([5,5]);ctx.beginPath();this.sceneData.route.forEach(([x,y],i)=>i?ctx.lineTo(px(x),px(y)):ctx.moveTo(px(x),px(y)));ctx.stroke();ctx.setLineDash([]);
     ctx.strokeStyle='#59d8bb';ctx.beginPath();this.trail.forEach(([x,y],i)=>i?ctx.lineTo(px(x),px(y)):ctx.moveTo(px(x),px(y)));ctx.stroke();

@@ -40,7 +40,7 @@ Build `MujocoPhysics` with the *same* `reset`, `step`, `set_command`, `sample_se
 
 **D. Optimisation:** batch runs across gear ratio, wheel radius, fan suction and controller gains, score time/energy/collisions/robustness. Domain randomisation before policy learning.
 
-## Status (v0.1)
+## Status (v0.3)
 
 - [x] Local FastAPI server, WebSocket state, editable Python code worker
 - [x] Parametric 2D physics with approximate motors, contact, battery, fan and ToF
@@ -49,7 +49,8 @@ Build `MujocoPhysics` with the *same* `reset`, `step`, `set_command`, `sample_se
 - [x] Config persistence and trace export
 - [ ] MuJoCo backend and actual 3D chassis/wheel dynamics
 - [ ] Calibration/validation against physical measurements
-- [ ] Maze exploration, mapping and fastest-path planning
+- [x] 6×6 sensor-only flood-fill exploration with odometry and dynamic wall discovery
+- [ ] Full 16×16 maze runs, return-to-start, known-shortest-path speedrun
 - [ ] Saved benchmark runner and ghost replay
 - [ ] ESC-specific motor behavior and measured fan curve
 - [ ] Device-code/HIL compatibility layer
@@ -65,3 +66,28 @@ Build `MujocoPhysics` with the *same* `reset`, `step`, `set_command`, `sample_se
 - `upload-to-github.bat`: local GitHub CLI auth/status check and browser sign-in, Git identity, safe repository creation, explicit choice of privacy and push confirmation, no force-push. Does not actually upload until invoked on user's computer.
 - **Validation:** `python -m pytest -q`: 5 tests, including unattended continuous Run through configured time limit, export/replay and reset consistency. `node --check web/app.js` validates JS syntax. A real browser end-to-end check was attempted but Chromium navigation to local web servers is restricted in this build environment. Windows batch script was reviewed but cannot be executed on Windows in this environment.
 - **Next:** MuJoCo contact and suction model with validation benchmarks, then real wheel-load effects, better sensor models, optimised steering and maze exploration. Stay on feature branches once remote exists; don't publish runtime secrets or overwrite a user's edited controller during upgrades.
+
+
+## v0.3 handover: first real maze solver (2026-11-01)
+
+- New course `maze_demo`: deterministic connected 6×6 180 mm grid, physical wall rectangles are shared by contacts and ToF raycasts. The actual maze is *not* included in controller observations; the 3D viewer has ground truth for debugging. Four centre goal cells.
+- `examples/maze_solver.py`: beginner-oriented unknown-maze flood-fill, optimistic planning through undiscovered edges, symmetric wall updates, exploration/backtracking, a gyro turn loop and encoder-based cell-to-cell throttle. Samples 8 ToF observations before deciding if an opening exists to protect against the 0.3% simulated invalid ToF readings. Not a high-speed racer; assumes 12 mm wheels.
+- `backend/server.py`: store optional controller-only `debug` map alongside 50 Hz trace frames. A controller can return `done=True` and `reason` to stop the run automatically. `GET /api/presets/maze_demo` loads safe defaults and solver source without saving until user runs.
+- Web UI: one-click maze+solver load preset, true 3D goal tiles, separate **discovered map** mini overlay from controller's open/closed/visited arrays, replay-aware wall discovery.
+- `requirements.txt`: use `uvicorn[standard]` for WSL/WebSocket support.
+- **Validation:** nine tests cover flood-fill on multiple sensor seeds, the real controller subprocess/status/replay path, and no ground-truth controller pose; default seed 735 reached goal in about 28 simulated seconds with zero collisions and ~1.5 cm final centre error. Other seeds occasionally produce a small number of incidental collision contacts. All original tests continue passing.
+- **Next:** introduce better localization and wall correction under slip, multi-ray/ToF noise robustness, second timed shortest-known-route run, maze generation presets and then more realistic MuJoCo physics.
+
+## v0.4: historic competition maze loader
+
+- `mazes/*.maze`: preserved ASCII wall grids; see README for individual source URLs.
+- `backend/competition.py`: strict parser, bidirectional wall checks, BFS connectivity,
+  collinear wall merging. Origin at board centre; (0,0) is the bottom-left cell.
+- Separate `examples/classic_competition_solver.py` for standard 16×16/N-facing
+  competition starts; demo 6×6 solver and interface remain intact.
+- A 16×16 maze has ~2.88 m physical width. 3D camera automatically zooms out;
+  discovered-map overlay uses smaller pixels to fit all 256 cells.
+- Run duration preset 300 s; replay saved at 10 Hz for larger mazes to prevent
+  50-Hz copies of 16×16 map debug data from exhausting host memory.
+- TODO: wall-contact localisation recovery; faithful goal entry rules; run-1
+  exploration vs run-2 speedrun; maze provenance verification against photos.

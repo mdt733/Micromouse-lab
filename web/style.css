@@ -27,3 +27,17 @@
 .graph-legend span:nth-child(3){color:#e8b86a}
 @media(max-width:1160px){.replay-readouts{font-size:9px}}
 @media(max-width:900px){.replay-strip{padding:8px 12px}.replay-heading span{display:none}}
+
+/* Optional micromouse mapping overlay: strictly controller-derived, not truth. */
+.maze-map-wrap{position:absolute;top:44px;right:14px;width:202px;z-index:2;
+ background:rgba(9,18,27,.93);border:1px solid #43616a;border-radius:8px;
+ padding:9px;box-shadow:0 6px 22px #0008;pointer-events:none}
+.maze-map-wrap[hidden]{display:none!important}
+.maze-map-title{display:flex;align-items:center;justify-content:space-between;color:#bcd8dc;
+ font-size:9px;letter-spacing:.08em;font-weight:750;margin-bottom:5px}
+.maze-map-title span{color:#b5e87d}
+.maze-map-wrap canvas{display:block;width:100%;height:auto;aspect-ratio:1;background:#111f2a;border-radius:3px}
+.maze-map-meta{font-size:10px;color:#8ea8b6;margin-top:5px;font-variant-numeric:tabular-nums}
+@media(max-width:560px){.maze-map-wrap{width:150px;top:43px;right:8px;padding:6px}}
+
+.sim-speed{display:flex;align-items:center;gap:7px;color:#9db2c4;font-size:11px;margin-right:6px}.sim-speed select{background:#152c38;color:#d9e8ee;border:1px solid #36505e;border-radius:5px;padding:6px 4px;font-size:12px}

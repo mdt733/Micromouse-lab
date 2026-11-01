@@ -32,7 +32,7 @@ LIMITS: dict[str, tuple[float,float]] = {
     "battery_internal_ohm":(0,.9), "fan_force_n":(0,5),
     "fan_time_constant_s":(.01,2), "fan_max_w":(0,30),
     "sensor_noise_mm":(0,30), "sensor_range_mm":(80,1500),
-    "duration_s":(1,120), "seed":(0,1_000_000)
+    "duration_s":(1,600), "seed":(0,1_000_000)
 }
 
 def validate_config(values: dict[str,Any]) -> dict[str,Any]:
@@ -59,6 +59,70 @@ def validate_config(values: dict[str,Any]) -> dict[str,Any]:
 def wall(cx:float,cy:float,length:float,width:float) -> tuple[float,float,float,float]:
     return (cx,cy,length/2,width/2)
 
+def make_demo_maze():
+    """Deterministic 6x6 competition-style maze: connected passages and dead ends.
+
+    True maze edges are used only to construct the physical walls and renderer.
+    They are never included in a controller sensor packet.
+    """
+    n, cell = 6, .18
+    rng = random.Random(140)
+    direction = ((0, 1), (1, 0), (0, -1), (-1, 0))  # N, E, S, W
+    opposite = (2, 3, 0, 1)
+    masks = [[15 for _ in range(n)] for _ in range(n)]
+    seen = {(0, 0)}
+    stack = [(0, 0)]
+    while stack:
+        x, y = stack[-1]
+        options = []
+        for d, (dx, dy) in enumerate(direction):
+            xy = (x + dx, y + dy)
+            if 0 <= xy[0] < n and 0 <= xy[1] < n and xy not in seen:
+                options.append((d, xy))
+        if not options:
+            stack.pop()
+            continue
+        d, (nx, ny) = rng.choice(options)
+        masks[y][x] &= ~(1 << d)
+        masks[ny][nx] &= ~(1 << opposite[d])
+        seen.add((nx, ny))
+        stack.append((nx, ny))
+    # Open a few additional internal walls to create loops rather than a pure tree.
+    choices = []
+    for y in range(n):
+        for x in range(n):
+            for d in (0, 1):
+                dx, dy = direction[d]
+                nx, ny = x + dx, y + dy
+                if nx < n and ny < n and masks[y][x] & (1 << d):
+                    choices.append((x, y, d, nx, ny))
+    rng.shuffle(choices)
+    for x, y, d, nx, ny in choices[:5]:
+        masks[y][x] &= ~(1 << d)
+        masks[ny][nx] &= ~(1 << opposite[d])
+    offset = -n * cell / 2
+    walls = []
+    for y in range(n):
+        for x in range(n):
+            cx = offset + (x + .5) * cell
+            cy = offset + (y + .5) * cell
+            if masks[y][x] & 1:  # N
+                walls.append(wall(cx, offset + (y + 1) * cell, cell + .012, .012))
+            if masks[y][x] & 2:  # E
+                walls.append(wall(offset + (x + 1) * cell, cy, .012, cell + .012))
+            if x == 0 and masks[y][x] & 8:  # W boundary
+                walls.append(wall(offset, cy, .012, cell + .012))
+            if y == 0 and masks[y][x] & 4:  # S boundary
+                walls.append(wall(cx, offset, cell + .012, .012))
+    return {
+        'title': 'Demo maze · 6×6',
+        'start': (offset + .5 * cell, offset + .5 * cell, 0.),
+        'route': [],  # No true solution path is shown as a driving guide.
+        'walls': walls,
+        'maze': {'width': n, 'height': n, 'cell_m': cell, 'origin': (offset, offset),
+                 'goal_cells': [(2, 2), (2, 3), (3, 2), (3, 3)]},
+    }
+
 COURSES:dict[str,dict[str,Any]] = {
     "straight":{
         "title":"Straight sprint", "start":(-.67,0,0),
@@ -80,6 +144,12 @@ COURSES:dict[str,dict[str,Any]] = {
                  wall(-.37,-.12,.05,.27),wall(.06,.13,.05,.27),wall(.47,-.12,.05,.27)]
     }
 }
+
+COURSES["maze_demo"] = make_demo_maze()
+
+# Historic classic competition layouts: source .maze files are stored in mazes/.
+from .competition import load_competition_courses
+COURSES.update(load_competition_courses())
 
 SENSOR_ANGLES = {"front":0, "front_left":math.pi/4, "left":math.pi/2,
                  "front_right":-math.pi/4, "right":-math.pi/2}
@@ -281,4 +351,5 @@ class PlanarPhysics:
     def scene(self):
         return {"walls":self.walls,"course":self.config['course'],"route":self.course['route'],
                 "start":self.course['start'],"title":self.course['title'],
+                "maze":self.course.get('maze'),
                 "robot":{"track_m":self.config['track_mm']/1000,"wheel_radius_m":self.config['wheel_radius_mm']/1000}}

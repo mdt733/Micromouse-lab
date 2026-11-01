@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from .controller_worker import ControllerRunner
 from .physics import DEFAULT_CONFIG, PlanarPhysics, validate_config
+from .competition import SOURCES
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / 'web'
@@ -41,13 +42,17 @@ class SimService:
         self.shutdown = threading.Event()
         self.thread: threading.Thread | None = None
         self.running = False
+        self.speed_factor = 1
         self.loaded = False
         self.complete = False
+        self.finish_reason = None
+        self.controller_debug = None
         self.run_id = 0
         self.logs = deque(maxlen=12000)
-        self.trace = deque(maxlen=8000)
+        self.trace = deque(maxlen=18000)
         self.clients: set[WebSocket] = set()
         self.sample_count = 0
+        self.last_record_s = -999.
         self.latest_sensors = self.engine.sample_sensors()
         self.record()
         self.log('Lab ready. Save & Run starts the autonomous simulation clock.')
@@ -58,20 +63,23 @@ class SimService:
                 self.logs.append({'t': round(self.engine.s.t, 3), 'line': line[:800]})
 
     def record(self):
-        self.trace.append({'state': self.engine.snapshot(), 'sensors': self.latest_sensors})
+        self.trace.append({'state': self.engine.snapshot(), 'sensors': self.latest_sensors,
+                           'debug': self.controller_debug})
 
     def status(self):
         with self.lock:
-            return {'running': self.running, 'loaded': self.loaded,
-                    'complete': self.complete, 'run_id': self.run_id,
+            return {'running': self.running, 'speed_factor': self.speed_factor, 'loaded': self.loaded,
+                    'complete': self.complete, 'finish_reason': self.finish_reason,
+                    'debug': self.controller_debug, 'run_id': self.run_id,
                     'trace_len': len(self.trace), 'config': self.config,
                     'scene': self.engine.scene(), 'state': self.engine.snapshot(),
                     'logs': list(self.logs)[-60:], 'sensors': self.latest_sensors}
 
     def frame(self):
         with self.lock:
-            return {'type': 'frame', 'running': self.running, 'loaded': self.loaded,
-                    'complete': self.complete, 'run_id': self.run_id,
+            return {'type': 'frame', 'running': self.running, 'speed_factor': self.speed_factor, 'loaded': self.loaded,
+                    'complete': self.complete, 'finish_reason': self.finish_reason,
+                    'debug': self.controller_debug, 'run_id': self.run_id,
                     'trace_len': len(self.trace), 'state': self.engine.snapshot(),
                     'logs': list(self.logs)[-60:], 'sensors': self.latest_sensors}
 
@@ -81,9 +89,12 @@ class SimService:
             self.worker.stop()
             self.loaded = False
             self.complete = False
+            self.finish_reason = None
+            self.controller_debug = None
             self.run_id += 1
             self.engine.reset()
             self.sample_count = 0
+            self.last_record_s = -999.
             self.trace.clear()
             self.logs.clear()
             self.latest_sensors = self.engine.sample_sensors()
@@ -123,7 +134,19 @@ class SimService:
                 if response.get('log'):
                     self.log(response['log'])
                 try:
-                    self.engine.set_command(response.get('output', {}))
+                    output = response.get('output', {})
+                    # Controller diagnostics are not physics input and cannot
+                    # overwrite the true map. Only stored for UI/replay inspection.
+                    self.controller_debug = output.get('debug') if isinstance(output.get('debug'), dict) else None
+                    self.engine.set_command(output)
+                    if output.get('done'):
+                        self.running = False
+                        self.complete = True
+                        self.finish_reason = str(output.get('reason', 'Controller finished'))[:120]
+                        self.engine.set_command({'left_motor': 0, 'right_motor': 0, 'fan': 0})
+                        self.log('RUN COMPLETE: ' + self.finish_reason)
+                        self.record()
+                        return
                 except (TypeError, ValueError) as exc:
                     self.log('Invalid controller output: ' + str(exc))
                     self.running = False
@@ -134,10 +157,15 @@ class SimService:
             if self.engine.s.t + 1e-8 >= self.config['duration_s']:
                 self.running = False
                 self.complete = True
+                self.finish_reason = 'Time limit reached'
                 self.log('Run complete: configured time limit reached. Replay is ready.')
                 break
-        # Record one complete measurement sample per 20 ms block (50 Hz).
-        self.record()
+        # Large classic mazes keep 10Hz recording to avoid excessive replay
+        # memory: each debug frame contains the controller's discovered map.
+        interval = .1 if self.config['course'].startswith('competition_') else .02
+        if self.engine.s.t - self.last_record_s + 1e-9 >= interval or self.complete:
+            self.record()
+            self.last_record_s = self.engine.s.t
 
     def start_clock(self):
         self.shutdown.clear()
@@ -153,7 +181,9 @@ class SimService:
                 active = self.running
                 if active:
                     try:
-                        self.step(20)
+                        for _ in range(self.speed_factor):
+                            if not self.running: break
+                            self.step(20)
                     except Exception as exc:
                         self.running = False
                         self.log(f'SIMULATION ERROR: {type(exc).__name__}: {exc}')
@@ -174,13 +204,13 @@ class SimService:
     def replay(self):
         with self.lock:
             return {'format': 'micromouse-lab-replay-v2', 'run_id': self.run_id,
-                    'complete': self.complete, 'frames': list(self.trace),
+                    'complete': self.complete, 'finish_reason': self.finish_reason, 'frames': list(self.trace),
                     'logs': list(self.logs), 'scene': self.engine.scene()}
 
     def export(self):
         with self.lock:
             return {'format': 'micromouse-lab-run-v2', 'run_id': self.run_id,
-                    'complete': self.complete, 'config': self.config,
+                    'complete': self.complete, 'finish_reason': self.finish_reason, 'config': self.config,
                     'controller': CODE_PATH.read_text(encoding='utf-8'),
                     'scene': self.engine.scene(), 'trace': list(self.trace),
                     'logs': list(self.logs),
@@ -228,9 +258,31 @@ async def replay():
 
 @app.get('/api/examples/{name}')
 async def example(name: str):
-    if name not in ('wall_follower', 'left_turn'):
+    if name not in ('wall_follower', 'left_turn', 'maze_solver'):
         raise HTTPException(status_code=404, detail='Unknown example')
     return {'code': (EXAMPLES / (name + '.py')).read_text(encoding='utf-8')}
+
+
+@app.get('/api/presets/maze_demo')
+async def maze_preset():
+    return {'config': {**DEFAULT_CONFIG, 'course': 'maze_demo', 'duration_s': 60.0},
+            'controller': (EXAMPLES / 'maze_solver.py').read_text(encoding='utf-8')}
+
+
+@app.get('/api/presets/competition/{name}')
+async def competition_preset(name: str):
+    course = 'competition_' + name
+    if course not in SOURCES:
+        raise HTTPException(status_code=404, detail='Unknown competition maze')
+    return {'config': {**DEFAULT_CONFIG, 'course': course, 'duration_s': 300.0},
+            'controller': (EXAMPLES / 'classic_competition_solver.py').read_text(encoding='utf-8'),
+            'source': SOURCES[course][2]}
+
+
+@app.get('/api/competition-mazes')
+async def competition_mazes():
+    return [{'id':key, 'title':title,'source_url':url}
+            for key,(filename,title,url) in SOURCES.items()]
 
 
 @app.get('/api/controller')
@@ -278,6 +330,20 @@ async def set_config(payload: ConfigPayload):
 
 class ActionPayload(BaseModel):
     action: str
+
+
+class SpeedPayload(BaseModel):
+    factor: int
+
+
+@app.post('/api/speed')
+async def speed(payload: SpeedPayload):
+    if payload.factor not in (1, 2, 4, 8):
+        raise HTTPException(status_code=400, detail='Allowed speeds: 1x, 2x, 4x, 8x')
+    with service.lock:
+        service.speed_factor = payload.factor
+        service.log(f'Simulator target speed: {payload.factor}x real time (CPU permitting).')
+        return {'ok': True, 'speed_factor': service.speed_factor}
 
 
 @app.post('/api/action')
